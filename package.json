@@ -28,7 +28,7 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/anomalyco/opencode-redact"
+    "url": "https://github.com/meimingqi222/opencode-redact"
   },
   "dependencies": {
     "@opencode-ai/plugin": "^1.15.11"
