@@ -13,7 +13,29 @@ OpenCode plugin with **112 built-in detection rules** covering GitHub PAT, AWS k
 npx opencode-redact install
 ```
 
-That's it. Restart OpenCode and all your secrets are protected.
+That's it. The CLI updates your `opencode.json` and `package.json`, then runs `bun install` to fetch the plugin. Restart OpenCode and all your secrets are protected.
+
+Uninstall any time:
+
+```bash
+npx opencode-redact uninstall
+```
+
+### Manual install
+
+Add to `opencode.json`:
+
+```json
+{ "plugin": ["opencode-redact"] }
+```
+
+Then add the dependency and install:
+
+```bash
+cd ~/.config/opencode
+echo '{"dependencies":{"opencode-redact":"^1.0.0"}}' >> package.json
+bun install
+```
 
 ## Features
 
