@@ -49,6 +49,7 @@ export const RedactPlugin: Plugin = async (
   let patterns = [...SECRET_PATTERNS, ...(opts.extraPatterns ?? [])];
   const redactPaths = opts.redactPaths ?? [];
   const pathCensor = opts.pathCensor ?? "[REDACTED]";
+  let disabled = opts.disabled ?? false;
 
   input.client.app.log({
     body: {
@@ -82,50 +83,59 @@ export const RedactPlugin: Plugin = async (
      * Hook: redact user message content and parts before processing.
      */
     "chat.message": async (_hookInput, output) => {
-      const cache = new Map<string, string>();
+      if (disabled) return;
+      try {
+        const cache = new Map<string, string>();
 
-      // Redact parts (text content)
-      if (output.parts) {
-        for (const part of output.parts) {
-          if (part.type === "text" && typeof part.text === "string") {
-            const original = part.text;
-            (part as Record<string, unknown>).text = redactStringValue(original, patterns, cache) ?? original;
-            if ((part as Record<string, unknown>).text !== original) redactionCount++;
+        // Redact parts (text content)
+        if (output.parts) {
+          for (const part of output.parts) {
+            if (part.type === "text" && typeof part.text === "string") {
+              const original = part.text;
+              (part as Record<string, unknown>).text = redactStringValue(original, patterns, cache) ?? original;
+              if ((part as Record<string, unknown>).text !== original) redactionCount++;
+            }
           }
         }
-      }
 
-      // UserMessage data is in parts, already handled above
+        // UserMessage data is in parts, already handled above
+      } catch {} // never block the user on redaction failure
     },
 
     /**
      * Hook: redact tool input arguments before execution.
      */
     "tool.execute.before": async (_hookInput, output) => {
-      if (output.args) {
-        const cache = new Map<string, string>();
-        output.args = redactDeep(output.args, patterns, cache) as Record<string, unknown>;
-      }
+      if (disabled) return;
+      try {
+        if (output.args) {
+          const cache = new Map<string, string>();
+          output.args = redactDeep(output.args, patterns, cache) as Record<string, unknown>;
+        }
+      } catch {}
     },
 
     /**
      * Hook: redact tool output after execution.
      */
     "tool.execute.after": async (_hookInput, output) => {
-      const cache = new Map<string, string>();
+      if (disabled) return;
+      try {
+        const cache = new Map<string, string>();
 
-      if (typeof output.output === "string") {
-        output.output = redactStringValue(output.output, patterns, cache) ?? output.output;
-      }
+        if (typeof output.output === "string") {
+          output.output = redactStringValue(output.output, patterns, cache) ?? output.output;
+        }
 
-      if (output.metadata) {
-        output.metadata = redactDeep(output.metadata, patterns, cache);
-      }
+        if (output.metadata) {
+          output.metadata = redactDeep(output.metadata, patterns, cache);
+        }
 
-      // Apply path-based redaction
-      if (redactPaths.length > 0 && output.metadata) {
-        output.metadata = redactByPaths(output.metadata, redactPaths, pathCensor);
-      }
+        // Apply path-based redaction
+        if (redactPaths.length > 0 && output.metadata) {
+          output.metadata = redactByPaths(output.metadata, redactPaths, pathCensor);
+        }
+      } catch {}
     },
 
     /**
@@ -135,49 +145,52 @@ export const RedactPlugin: Plugin = async (
      * tool results, and historical messages).
      */
     "experimental.chat.messages.transform": async (_hookInput, output) => {
-      const cache = new Map<string, string>();
+      if (disabled) return;
+      try {
+        const cache = new Map<string, string>();
 
-      if (output.messages) {
-        for (let i = 0; i < output.messages.length; i++) {
-          const msg = output.messages[i];
+        if (output.messages) {
+          for (let i = 0; i < output.messages.length; i++) {
+            const msg = output.messages[i];
 
-          // Redact message info
-          if (msg.info) {
-            msg.info = redact(msg.info, patterns) as typeof msg.info;
-          }
+            // Redact message info
+            if (msg.info) {
+              msg.info = redact(msg.info, patterns) as typeof msg.info;
+            }
 
-          // Redact all parts
-          if (msg.parts) {
-            for (const part of msg.parts) {
-              if (part.type === "text" && typeof part.text === "string") {
-                const original = part.text;
-                (part as Record<string, unknown>).text =
-                  redactStringValue(original, patterns, cache) ?? original;
-                if ((part as Record<string, unknown>).text !== original) redactionCount++;
-              }
-              // Redact tool parts (input args + output)
-              if (part.type === "tool") {
-                const toolPart = part as Record<string, unknown>;
-                const state = toolPart.state as Record<string, unknown> | undefined;
-                if (state && typeof state === "object") {
-                  if (state.input && typeof state.input === "object") {
-                    state.input = redactDeep(state.input, patterns, cache);
-                  }
-                  if (typeof state.output === "string") {
-                    state.output = redactStringValue(state.output, patterns, cache) ?? state.output;
+            // Redact all parts
+            if (msg.parts) {
+              for (const part of msg.parts) {
+                if (part.type === "text" && typeof part.text === "string") {
+                  const original = part.text;
+                  (part as Record<string, unknown>).text =
+                    redactStringValue(original, patterns, cache) ?? original;
+                  if ((part as Record<string, unknown>).text !== original) redactionCount++;
+                }
+                // Redact tool parts (input args + output)
+                if (part.type === "tool") {
+                  const toolPart = part as Record<string, unknown>;
+                  const state = toolPart.state as Record<string, unknown> | undefined;
+                  if (state && typeof state === "object") {
+                    if (state.input && typeof state.input === "object") {
+                      state.input = redactDeep(state.input, patterns, cache);
+                    }
+                    if (typeof state.output === "string") {
+                      state.output = redactStringValue(state.output, patterns, cache) ?? state.output;
+                    }
                   }
                 }
-              }
-              // Redact reasoning content (model thinking)
-              if (part.type === "reasoning" && typeof (part as Record<string, unknown>).text === "string") {
-                const rPart = part as Record<string, unknown>;
-                const original = rPart.text as string;
-                rPart.text = redactStringValue(original, patterns, cache) ?? original;
+                // Redact reasoning content (model thinking)
+                if (part.type === "reasoning" && typeof (part as Record<string, unknown>).text === "string") {
+                  const rPart = part as Record<string, unknown>;
+                  const original = rPart.text as string;
+                  rPart.text = redactStringValue(original, patterns, cache) ?? original;
+                }
               }
             }
           }
         }
-      }
+      } catch {}
     },
 
     /**
@@ -188,12 +201,12 @@ export const RedactPlugin: Plugin = async (
         event.type === "command.executed" &&
         event.properties?.name === "redact:toggle"
       ) {
-        opts.disabled = !opts.disabled;
+        disabled = !disabled;
         input.client.app.log({
           body: {
             service: "opencode-redact",
             level: "info",
-            message: `Plugin ${opts.disabled ? "disabled" : "enabled"}`,
+            message: `Plugin ${disabled ? "disabled" : "enabled"}`,
           },
         });
       }
