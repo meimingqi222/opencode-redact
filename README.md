@@ -97,3 +97,8 @@ npx opencode-redact install --local ./   # from local clone
 ## License
 
 MIT
+
+## Links
+
+- [npm](https://www.npmjs.com/package/opencode-redact)
+- [GitHub](https://github.com/meimingqi222/opencode-redact)

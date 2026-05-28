@@ -1,6 +1,6 @@
 {
   "name": "opencode-redact",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "OpenCode plugin that automatically redacts API keys, tokens, passwords and other secrets from all data sent to LLMs",
   "type": "module",
   "main": "index.ts",
