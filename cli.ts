@@ -4,7 +4,7 @@
  * CLI installer for opencode-redact plugin.
  *
  * Usage:
- *   npx opencode-redact install              # Enable the plugin
+ *   npx opencode-redact install              # Enable the plugin (auto-install deps)
  *   npx opencode-redact uninstall            # Disable the plugin
  *   npx opencode-redact install --local      # Install from local git clone
  *   npx opencode-redact status               # Show current plugin status
@@ -16,22 +16,20 @@ import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawnSync } from "node:child_process";
 
-const __dirname = dirname(fileURLToPath(import.meta.url));
 const PLUGIN_NAME = "opencode-redact";
+const CONFIG_DIR = join(homedir(), ".config", "opencode");
+const PKG_PATH = join(CONFIG_DIR, "package.json");
+const OC_PATH = join(CONFIG_DIR, "opencode.json");
 
 function getConfigPath(): string {
   const local = join(process.cwd(), "opencode.json");
   if (existsSync(local)) return local;
-
-  const global = join(homedir(), ".config", "opencode", "opencode.json");
-  if (existsSync(global)) return global;
-
-  throw new Error(
-    "No opencode.json found. Create one first with: opencode init"
-  );
+  if (existsSync(OC_PATH)) return OC_PATH;
+  throw new Error("No opencode.json found. Run: opencode init");
 }
 
-function readConfig(path: string): { data: any; raw: string } {
+function readJsonc(path: string): { data: any; raw: string } {
+  if (!existsSync(path)) return { data: {}, raw: "{}" };
   const raw = readFileSync(path, "utf-8");
   try {
     return { data: JSON.parse(raw), raw };
@@ -56,6 +54,15 @@ function hasPlugin(data: any): boolean {
   );
 }
 
+function hasDep(data: any): boolean {
+  return data.dependencies && PLUGIN_NAME in data.dependencies;
+}
+
+function runBunInstall(): boolean {
+  const r = spawnSync("bun", ["install"], { cwd: CONFIG_DIR, stdio: "inherit", timeout: 60_000 });
+  return r.status === 0;
+}
+
 function installFromNpm(data: any): any {
   const result = { ...data };
   if (!Array.isArray(result.plugin)) result.plugin = [];
@@ -70,41 +77,40 @@ function installFromLocal(data: any, localPath: string): any {
   const entry = isDir
     ? `file:///${localPath.replace(/\\/g, "/")}/index.ts`
     : `file:///${localPath.replace(/\\/g, "/")}`;
-
   const result = { ...data };
   if (!Array.isArray(result.plugin)) result.plugin = [];
-
-  const existing = result.plugin.findIndex((p: any) => {
-    if (typeof p === "string") return p === entry;
-    return false;
-  });
-
-  if (existing === -1) {
+  if (!result.plugin.some((p: any) => typeof p === "string" && p === entry)) {
     result.plugin = [entry, ...result.plugin];
   }
   return result;
 }
 
-function uninstall(data: any): any {
+function addDep(data: any): any {
   const result = { ...data };
-  if (!Array.isArray(result.plugin)) return result;
-
-  result.plugin = result.plugin.filter((p: any) => {
-    if (typeof p === "string") {
-      return p !== PLUGIN_NAME;
-    }
-    if (Array.isArray(p) && p.length > 0) {
-      return p[0] !== PLUGIN_NAME;
-    }
-    return true;
-  });
-
+  if (!result.dependencies) result.dependencies = {};
+  result.dependencies[PLUGIN_NAME] = "^1.0.0";
   return result;
 }
 
-function writeConfig(path: string, data: any): void {
-  const content = JSON.stringify(data, null, 2) + "\n";
-  writeFileSync(path, content, "utf-8");
+function uninstallPlugin(data: any): any {
+  const result = { ...data };
+  if (!Array.isArray(result.plugin)) return result;
+  result.plugin = result.plugin.filter((p: any) => {
+    if (typeof p === "string") return p !== PLUGIN_NAME;
+    if (Array.isArray(p)) return p?.[0] !== PLUGIN_NAME;
+    return true;
+  });
+  return result;
+}
+
+function removeDep(data: any): any {
+  if (!data.dependencies) return data;
+  const { [PLUGIN_NAME]: _, ...rest } = data.dependencies;
+  return { ...data, dependencies: rest };
+}
+
+function writeJson(path: string, data: any): void {
+  writeFileSync(path, JSON.stringify(data, null, 2) + "\n", "utf-8");
 }
 
 function showHelp(): void {
@@ -112,13 +118,10 @@ function showHelp(): void {
 ${PLUGIN_NAME} — OpenCode secret redaction plugin
 
 Usage:
-  npx ${PLUGIN_NAME} install              # Install from npm (recommended)
+  npx ${PLUGIN_NAME} install              # Install & auto-setup dependencies
   npx ${PLUGIN_NAME} install --local <path> # Install from local directory
-  npx ${PLUGIN_NAME} uninstall            # Remove from config
+  npx ${PLUGIN_NAME} uninstall            # Full cleanup
   npx ${PLUGIN_NAME} status               # Show current status
-
-Options:
-  --local <path>    Use a local plugin path instead of npm
 `);
 }
 
@@ -134,16 +137,20 @@ async function main() {
   if (cmd === "status") {
     try {
       const configPath = getConfigPath();
-      const { data } = readConfig(configPath);
-      if (hasPlugin(data)) {
-        console.log(`✅ ${PLUGIN_NAME} is ENABLED`);
-        console.log(`   Config: ${configPath}`);
+      const { data } = readJsonc(configPath);
+      const { data: pkgData } = readJsonc(PKG_PATH);
+
+      if (hasPlugin(data) && hasDep(pkgData)) {
+        console.log(`✅ ${PLUGIN_NAME} is ENABLED (npm + deps)`);
+      } else if (hasPlugin(data)) {
+        console.log(`⚠ ${PLUGIN_NAME} in plugin list but deps missing`);
       } else {
         console.log(`❌ ${PLUGIN_NAME} is NOT installed`);
-        console.log(`   Config: ${configPath}`);
       }
+      console.log(`   opencode.json: ${configPath}`);
+      console.log(`   package.json:  ${PKG_PATH}`);
     } catch (err: any) {
-      console.error(`❌ Error: ${err.message}`);
+      console.error(`❌ ${err.message}`);
       process.exit(1);
     }
     return;
@@ -155,10 +162,11 @@ async function main() {
 
     try {
       const configPath = getConfigPath();
-      const { data } = readConfig(configPath);
+      const { data } = readJsonc(configPath);
+      const { data: pkgData } = readJsonc(PKG_PATH);
 
       if (hasPlugin(data)) {
-        console.log(`⚠ ${PLUGIN_NAME} is already installed in ${configPath}`);
+        console.log(`⚠ ${PLUGIN_NAME} already in opencode.json`);
         process.exit(0);
       }
 
@@ -170,15 +178,27 @@ async function main() {
       } else {
         newConfig = installFromNpm(data);
         console.log(`📦 Installing ${PLUGIN_NAME} from npm`);
-        console.log(`   OpenCode will auto-install it on next start.`);
-        console.log(`   Or run manually: npm install -g ${PLUGIN_NAME}`);
       }
 
-      writeConfig(configPath, newConfig);
-      console.log(`✅ ${PLUGIN_NAME} installed to ${configPath}`);
-      console.log(`   Restart OpenCode or reload plugins to activate.`);
+      // Step 1: write opencode.json
+      writeJson(configPath, newConfig);
+
+      // Step 2: add dependency to package.json + install
+      if (!isLocal) {
+        const newPkg = addDep(pkgData);
+        writeJson(PKG_PATH, newPkg);
+        console.log(`   Added to ${PKG_PATH}`);
+        console.log(`   Running bun install...`);
+        if (runBunInstall()) {
+          console.log(`✅ ${PLUGIN_NAME} installed successfully`);
+        } else {
+          console.log(`⚠ bun install failed — run manually: cd ~/.config/opencode && bun install`);
+        }
+      } else {
+        console.log(`✅ ${PLUGIN_NAME} installed (local path)`);
+      }
     } catch (err: any) {
-      console.error(`❌ Error: ${err.message}`);
+      console.error(`❌ ${err.message}`);
       process.exit(1);
     }
     return;
@@ -187,18 +207,31 @@ async function main() {
   if (cmd === "uninstall") {
     try {
       const configPath = getConfigPath();
-      const { data } = readConfig(configPath);
+      const { data } = readJsonc(configPath);
+      const { data: pkgData } = readJsonc(PKG_PATH);
 
       if (!hasPlugin(data)) {
-        console.log(`⚠ ${PLUGIN_NAME} is not currently installed`);
+        console.log(`⚠ ${PLUGIN_NAME} not found in opencode.json`);
         process.exit(0);
       }
 
-      const newConfig = uninstall(data);
-      writeConfig(configPath, newConfig);
-      console.log(`✅ ${PLUGIN_NAME} removed from ${configPath}`);
+      // Step 1: remove from opencode.json
+      const newConfig = uninstallPlugin(data);
+      writeJson(configPath, newConfig);
+      console.log(`   Removed from opencode.json`);
+
+      // Step 2: remove dependency + reinstall
+      if (hasDep(pkgData)) {
+        const newPkg = removeDep(pkgData);
+        writeJson(PKG_PATH, newPkg);
+        console.log(`   Removed from package.json`);
+        console.log(`   Running bun install...`);
+        runBunInstall();
+      }
+
+      console.log(`✅ ${PLUGIN_NAME} uninstalled`);
     } catch (err: any) {
-      console.error(`❌ Error: ${err.message}`);
+      console.error(`❌ ${err.message}`);
       process.exit(1);
     }
     return;
