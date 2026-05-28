@@ -1,0 +1,36 @@
+{
+  "name": "opencode-redact",
+  "version": "1.0.0",
+  "description": "OpenCode plugin that automatically redacts API keys, tokens, passwords and other secrets from all data sent to LLMs",
+  "type": "module",
+  "main": "index.ts",
+  "types": "index.ts",
+  "bin": {
+    "opencode-redact": "./cli.ts"
+  },
+  "files": [
+    "index.ts",
+    "engine.ts",
+    "patterns.ts",
+    "cli.ts",
+    "README.md"
+  ],
+  "keywords": [
+    "opencode",
+    "opencode-plugin",
+    "redact",
+    "secret",
+    "privacy",
+    "security",
+    "sanitize",
+    "pii"
+  ],
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/anomalyco/opencode-redact"
+  },
+  "dependencies": {
+    "@opencode-ai/plugin": "^1.15.11"
+  }
+}
